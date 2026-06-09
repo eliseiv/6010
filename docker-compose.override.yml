@@ -1,0 +1,20 @@
+# docker-compose.override.yml — DEV-ONLY (локальная разработка).
+#
+# Этот файл АВТОМАТИЧЕСКИ подхватывается `docker compose up` БЕЗ флагов -f,
+# то есть только при локальном запуске из корня репозитория.
+#
+# В PRODUCTION он НЕ применяется: на VPS деплой идёт ЯВНЫМ списком файлов
+#   docker compose -f docker-compose.yml up -d --build
+# (см. docs/07-deployment.md, раздел "Dev vs Prod запуск"). При явном -f
+# Compose не добавляет override автоматически.
+#
+# Единственное назначение: пробросить порт api на localhost, чтобы открыть
+# Swagger UI (/docs) в браузере на dev-машине. В prod публикация наружу и TLS —
+# через reverse-proxy, поэтому в основном docker-compose.yml порт api НЕ
+# публикуется (expose-only). Не добавляй сюда секреты.
+
+services:
+  api:
+    ports:
+      # host:container — публикуем 8000 только на dev-машине.
+      - "8000:8000"

@@ -1,0 +1,60 @@
+# Local / VPS deployment per docs/07-deployment.md.
+# Two services: api (FastAPI/Uvicorn) and db (PostgreSQL 16).
+# Secrets are provided at runtime via .env (never baked into the image).
+# TLS / public exposure is handled by a reverse-proxy on the VPS, outside this file.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - appnet
+    # Not published to the host: only the api service reaches it over appnet.
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # DATABASE_URL собирается здесь, в секции environment самого compose-файла,
+      # где Compose РЕАЛЬНО интерполирует ${...} из .env рядом с compose-файлом.
+      # В env_file интерполяция ${...} НЕ выполняется — значения уходят в контейнер
+      # дословно. Значения из environment имеют приоритет над env_file, поэтому
+      # единый источник пароля — POSTGRES_PASSWORD.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Internal HTTP only; reverse-proxy on the VPS terminates TLS and publishes it.
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4); sys.exit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - appnet
+
+volumes:
+  pgdata:
+
+networks:
+  appnet:
+    driver: bridge

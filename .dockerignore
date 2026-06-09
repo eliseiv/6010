@@ -1,0 +1,42 @@
+# Secrets — never bake into the image (security: 05-security.md)
+.env
+.env.*
+!.env.example
+
+# VCS
+.git
+.gitignore
+.github
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Tests — not needed in the runtime image
+tests/
+
+# Docs — not needed in the runtime image
+docs/
+
+# Local tooling / IDE
+.venv/
+venv/
+.vscode/
+.idea/
+*.md
+
+# Docker artifacts themselves
+Dockerfile
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
