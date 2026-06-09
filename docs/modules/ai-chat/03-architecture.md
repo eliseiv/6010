@@ -4,7 +4,7 @@
 
 | Слой | Файлы (ориентир) | Ответственность |
 |---|---|---|
-| Routers | `app/routers/transcriptions.py`, `app/routers/chat.py`, `app/routers/health.py` | HTTP endpoints, DI auth |
+| Routers | `app/routers/transcriptions.py`, `app/routers/chat.py`, `app/routers/health.py` (оба `GET /healthz` и `GET /health`) | HTTP endpoints, DI auth |
 | Schemas | `app/schemas/*.py` | Pydantic v2 request/response |
 | Services | `app/services/ingest.py`, `app/services/chat.py`, `app/services/context.py`, `app/services/llm.py`, `app/services/blocks.py` | Бизнес-логика |
 | Repositories | `app/repositories/*.py` | SQLAlchemy async доступ |
@@ -68,6 +68,21 @@
 5. Если минимальный контекст не влезает → 413 `context_too_long`.
 
 В ответе всегда выставляются `context_mode` и `context_truncated`. При усечении в markdown добавляется пометка (например: «Ответ построен по сокращённому контексту (summary вместо полного текста)»).
+
+## Health endpoints (зафиксировано)
+
+`app/routers/health.py` реализует два публичных endpoint без auth (контракты — в
+[02-api-contracts.md](02-api-contracts.md) §4–5):
+
+| Endpoint | Поведение | БД |
+|---|---|---|
+| `GET /healthz` | liveness; всегда `200 {"status":"ok"}` пока процесс жив | не трогает |
+| `GET /health` | readiness; `200 {"status":"ok"}` или `503 {"status":"degraded"}` | выполняет лёгкую проверку (`SELECT 1`) |
+
+`/healthz` намеренно не зависит от БД, чтобы контейнерный healthcheck/Traefik не
+рестартовали живой процесс при временной недоступности БД (см.
+[ADR-006](../../adr/ADR-006-prod-deploy-shared-traefik.md)). Контейнерный healthcheck
+`api` использует `GET /healthz` (см. [07-deployment.md](../../07-deployment.md)).
 
 ## Обработка ошибок (зафиксировано)
 

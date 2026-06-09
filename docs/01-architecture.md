@@ -18,7 +18,7 @@
 
 | Слой | Содержимое |
 |---|---|
-| Routers | HTTP endpoints (`/api/transcriptions`, `/api/chat/messages`, `/api/transcriptions/{id}/messages`, `/health`) |
+| Routers | HTTP endpoints (`/api/transcriptions`, `/api/chat/messages`, `/api/transcriptions/{id}/messages`, `/healthz` liveness, `/health` readiness) |
 | Schemas | Pydantic v2 модели request/response |
 | Services | Бизнес-логика: ingest, построение контекста (summary-first), обращение к OpenAI, сохранение истории |
 | Repositories | Доступ к БД через SQLAlchemy 2 (async) |
@@ -26,17 +26,28 @@
 
 ## Deployment topology
 
+Прод — на общем сервере за общим Traefik (терминирует TLS, выпускает Let's Encrypt).
+Сервис не публикует портов 80/443. Полная прод-топология, сеть `web`, labels и CI/CD —
+в [07-deployment.md](07-deployment.md) и [ADR-006](adr/ADR-006-prod-deploy-shared-traefik.md).
+
 ```mermaid
 graph LR
-    Client[Внешний клиент] -->|HTTP + X-API-Key| API[api: FastAPI/Uvicorn]
+    Client[Внешний клиент] -->|HTTPS velunoapp.shop + X-API-Key| TR[Общий Traefik\nTLS / Let's Encrypt]
+    TR -->|HTTP :8000 по сети web| API[api: FastAPI/Uvicorn]
     API -->|SQL async| DB[(PostgreSQL)]
     API -->|HTTPS| OpenAI[OpenAI API]
 
-    subgraph VPS [VPS / docker-compose]
-        API
-        DB
+    subgraph SRV [Общий сервер 87.239.135.154]
+        TR
+        subgraph AICHAT [/opt/aichat - наш сервис]
+            API
+            DB
+        end
     end
 ```
+
+Traefik живёт в `/opt/edge` (управляется владельцем сервера, мы не трогаем); наш сервис —
+в `/opt/aichat`. Связь между ними — общая внешняя docker-сеть `web`.
 
 ## Поток главного запроса (POST /api/chat/messages)
 

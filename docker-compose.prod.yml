@@ -1,0 +1,35 @@
+# docker-compose.prod.yml — PROD-overlay (общий сервер за общим Traefik).
+#
+# Применяется ТОЛЬКО явным списком файлов (см. docs/07-deployment.md, ADR-006):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# При явном -f Compose НЕ подхватывает docker-compose.override.yml (dev), поэтому
+# порт 8000 наружу не публикуется — прод-инвариант. Публикация/TLS — общий Traefik
+# (каталог /opt/edge на сервере, нами не управляется).
+#
+# Этот файл:
+#   - подключает api к внешней сети `web` (для Traefik) + внутренней `appnet` (для БД);
+#   - вешает на api Traefik labels (router/service name = aichat, домен velunoapp.shop);
+#   - объявляет сеть `web` как external (НЕ создаёт её — она уже создана владельцем edge);
+#   - НЕ публикует портов на хост (никаких ports:).
+# db остаётся ТОЛЬКО во внутренней сети appnet, без портов наружу.
+
+services:
+  api:
+    networks:
+      - web
+      - appnet
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.aichat.rule=Host(`velunoapp.shop`)"
+      - "traefik.http.routers.aichat.entrypoints=websecure"
+      - "traefik.http.routers.aichat.tls.certresolver=le"
+      - "traefik.http.services.aichat.loadbalancer.server.port=8000"
+
+networks:
+  # Общая внешняя сеть с Traefik. Имя `web` — внешний контракт владельца edge
+  # (см. /opt/edge/README.md). external: true → Compose только подключается, не создаёт.
+  web:
+    external: true
+  appnet:
+    driver: bridge

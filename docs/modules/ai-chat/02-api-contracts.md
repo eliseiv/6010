@@ -1,6 +1,6 @@
 # ai-chat / 02 — API Contracts (источник истины)
 
-Канонические контракты HTTP API. Все endpoints под префиксом `/api` требуют заголовок `X-API-Key`, кроме `GET /health`. Тела — `application/json`.
+Канонические контракты HTTP API. Все endpoints под префиксом `/api` требуют заголовок `X-API-Key`. Публичные endpoints без ключа: `GET /healthz` (liveness) и `GET /health` (readiness). Тела — `application/json`.
 
 ## Общий формат ошибки
 
@@ -166,12 +166,52 @@
 
 ---
 
-## 4. GET /health — healthcheck (без ключа)
+## 4. GET /healthz — liveness (без ключа)
 
-### Response 200
+Liveness-проба: «процесс жив». Используется контейнерным healthcheck `api`, общим
+Traefik и внешним мониторингом. **БЕЗ auth** (как `/health`). **НЕ** зависит от БД и
+OpenAI.
+
+### Response 200 (всегда, пока процесс жив)
 
 ```json
 { "status": "ok" }
 ```
 
-Не обращается к OpenAI. Опционально проверяет доступность БД (тогда при недоступности — 503 `{"status":"degraded"}`).
+`/healthz` не имеет статуса `degraded` и не возвращает 503: пока FastAPI/Uvicorn
+отвечает — это `200`. Недоступность БД на `/healthz` **не** влияет (иначе живой процесс
+получал бы лишние рестарты от healthcheck). Проверка БД — на `/health` (ниже).
+
+---
+
+## 5. GET /health — readiness/health (без ключа)
+
+Readiness/health-проба: «готов обслуживать запросы». **БЕЗ auth.** Не обращается к
+OpenAI, **проверяет доступность БД**.
+
+### Response 200 (БД доступна)
+
+```json
+{ "status": "ok" }
+```
+
+### Response 503 (БД недоступна)
+
+```json
+{ "status": "degraded" }
+```
+
+---
+
+### Различие /healthz vs /health (зафиксировано)
+
+| Endpoint | Семантика | Зависит от БД | Коды | Назначение |
+|---|---|---|---|---|
+| `GET /healthz` | liveness (процесс жив) | нет | `200` всегда | healthcheck контейнера, Traefik, внешний мониторинг |
+| `GET /health` | readiness/health (готов обслуживать) | да | `200` / `503 degraded` | проверка готовности с учётом БД |
+
+Обоснование разделения — [ADR-006](../../adr/ADR-006-prod-deploy-shared-traefik.md):
+liveness не должен падать из-за временной недоступности БД, иначе оркестратор будет
+рестартовать здоровый процесс; для проверки готовности (БД доступна) существует
+отдельный `/health`. Оба endpoint — без `X-API-Key` (исключения из auth, см.
+[05-security.md](../../05-security.md)).

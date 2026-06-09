@@ -5,7 +5,7 @@
 ## Базовый путь и аутентификация
 
 - Базовый префикс: `/api`.
-- Все endpoints требуют заголовок `X-API-Key: <API_KEY>`, **кроме** `GET /health`.
+- Все endpoints требуют заголовок `X-API-Key: <API_KEY>`, **кроме** `GET /healthz` и `GET /health`.
 - Формат тел запроса/ответа: `application/json`. Контент ответов LLM — markdown внутри поля `content`.
 - Версионирование: без префикса версии в v1 (см. TD-003).
 
@@ -16,7 +16,8 @@
 | `POST` | `/api/transcriptions` | Ingest транскрибации (+опц. summary) | X-API-Key |
 | `POST` | `/api/chat/messages` | Создать сообщение в чате, получить ответ LLM | X-API-Key |
 | `GET` | `/api/transcriptions/{transcription_id}/messages` | История чата (пагинация) | X-API-Key |
-| `GET` | `/health` | Healthcheck | нет |
+| `GET` | `/healthz` | Liveness (процесс жив, без БД) | нет |
+| `GET` | `/health` | Readiness/health (с проверкой БД) | нет |
 
 ## Коды ошибок (сводка)
 

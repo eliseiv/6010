@@ -12,6 +12,15 @@ router = APIRouter(tags=["health"])
 logger = get_logger(__name__)
 
 
+@router.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Return liveness status. Does not touch DB or OpenAI.
+
+    Always returns 200 {"status": "ok"} while the process is alive.
+    """
+    return {"status": "ok"}
+
+
 @router.get("/health")
 async def health(session: SessionDep, response: Response) -> dict[str, str]:
     """Return service health. Does not call OpenAI.
