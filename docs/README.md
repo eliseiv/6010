@@ -17,7 +17,7 @@
 | [04-api.md](04-api.md) | HTTP API контракты | Готов |
 | [05-security.md](05-security.md) | Auth, секреты, угрозы | Готов |
 | [06-testing-strategy.md](06-testing-strategy.md) | Пирамида тестов, coverage gate | Готов |
-| [07-deployment.md](07-deployment.md) | Docker, docker-compose, прод за общим Traefik, CI/CD | Готов |
+| [07-deployment.md](07-deployment.md) | Docker, docker-compose, прод за общим Traefik (live: velunoapp.shop), CI/CD с healthcheck gate + авто-rollback | Готов |
 | [100-known-tech-debt.md](100-known-tech-debt.md) | Реестр tech debt | Готов |
 | [99-open-questions.md](99-open-questions.md) | Cross-cutting открытые вопросы | Готов |
 | [adr/INDEX.md](adr/INDEX.md) | Реестр ADR | Готов |

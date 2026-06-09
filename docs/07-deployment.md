@@ -210,11 +210,15 @@ curl http://localhost:8000/openapi.json  # 200 OpenAPI schema
 ## Миграции
 
 - Применяются автоматически на старте контейнера `api` (`alembic upgrade head`) до запуска uvicorn.
-- Откат — вручную через `alembic downgrade` (в scope оператора).
+- **Откат схемы БД** — вручную через `alembic downgrade` (в scope оператора). Это отдельная
+  операция уровня данных; она **не** входит в авто-rollback CD (см. «CD-rollback» ниже),
+  который откатывает только код и пересобирает стек.
 
 ## CI/CD
 
 Платформа: **GitHub Actions**, репозиторий публичный (`github.com/eliseiv/6010`).
+CD выполняет SSH-деплой на shared-сервер с **post-deploy healthcheck gate** и
+**авто-rollback** при провале (подробности — в подразделах ниже).
 
 ### CI (на pull request / push)
 
@@ -232,22 +236,77 @@ sequenceDiagram
 
     Dev->>GH: push в main
     GH->>SRV: SSH (SSH_HOST/SSH_USER/SSH_PRIVATE_KEY)
-    SRV->>SRV: cd /opt/aichat && git pull (HTTPS, публичный репо)
-    SRV->>SRV: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+    SRV->>SRV: cd /opt/aichat; PREV=$(git rev-parse HEAD) — точка отката
+    SRV->>SRV: trap rollback ERR (любая ошибка ниже → откат)
+    SRV->>SRV: git pull --ff-only
+    SRV->>SRV: docker compose -f ... -f docker-compose.prod.yml up -d --build
     SRV->>SRV: api: alembic upgrade head, затем uvicorn
-    TR->>SRV: маршрутизирует velunoapp.shop → api:8000 по сети web
+    SRV->>TR: post-deploy gate: ждёт https://velunoapp.shop/healthz (ретраи + строгий curl)
+    alt healthcheck OK
+        SRV->>SRV: trap снят, docker image prune -f → job success
+        TR->>SRV: маршрутизирует velunoapp.shop → api:8000 по сети web
+    else healthcheck FAIL
+        SRV->>SRV: rollback: git reset --hard $PREV + пересборка прод-стека
+        SRV->>GH: exit 1 → job FAILED
+    end
 ```
 
 Шаги CD:
 
 1. Trigger: `push` в ветку `main`.
 2. GitHub Actions подключается по SSH к серверу, используя `SSH_HOST`, `SSH_USER`,
-   `SSH_PRIVATE_KEY` из **GitHub Secrets**.
-3. На сервере: `cd /opt/aichat && git pull` — репозиторий публичный, тянется по HTTPS,
+   `SSH_PRIVATE_KEY` из **GitHub Secrets**. Скрипт выполняется с `set -euo pipefail`
+   (остановка на первой ошибке).
+3. `cd /opt/aichat`; **фиксируется точка отката** `PREV=$(git rev-parse HEAD)` до любых
+   изменений и устанавливается `trap rollback ERR` — любая необработанная ошибка ниже
+   (сбой `git pull`, сборки, healthcheck) запускает откат.
+4. На сервере: `git pull --ff-only` — репозиторий публичный, тянется по HTTPS,
    отдельный доступ-токен к GitHub не нужен.
-4. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` —
+5. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` —
    пересборка и рестарт; `api` на старте применяет миграции и поднимает uvicorn.
-5. `/opt/aichat/.env` (gitignored) CI не трогает — прикладные секреты остаются на сервере.
+6. **Post-deploy healthcheck gate** (см. ниже): CD дожидается успешного ответа
+   `https://velunoapp.shop/healthz`. Неуспех → откат.
+7. При успехе: `trap` снимается, `docker image prune -f` подчищает старые образы, job
+   завершается success.
+8. `/opt/aichat/.env` (gitignored) CI не трогает — прикладные секреты остаются на сервере.
+
+### Post-deploy healthcheck gate
+
+`docker compose up -d --build` возвращает `0` сразу после старта контейнеров — это **не**
+гарантирует, что сервис реально обслуживает (упавшая миграция, CrashLoop, недоступный
+OpenAI на старте). Поэтому CD добавляет gate **после** `up -d`:
+
+- Цикл из 30 попыток с интервалом 5 c: `curl -fsS https://velunoapp.shop/healthz`. Первый
+  успешный ответ (HTTP 200) завершает ожидание — сервис «живой» через публичный Traefik.
+- Если за весь таймаут (≈150 c) ни одна попытка не прошла — вызывается `rollback` (см.
+  ниже).
+- После успешного цикла — **строгая финальная проверка** `curl -fsS .../healthz`: её
+  ненулевой код через `trap ERR` тоже инициирует откат. Это страхует от гонок (сервис
+  ответил один раз и снова упал).
+
+Проба — именно liveness `GET /healthz` (без БД, без auth, см. «Health & наблюдаемость»):
+gate проверяет, что процесс поднялся и доступен снаружи через Traefik по реальному
+домену с валидным TLS, а не локальный порт.
+
+### CD-rollback (авто-откат при провале деплоя)
+
+Откат — встроенная часть CD-флоу (раньше в этом документе фигурировал только ручной
+`alembic downgrade`; он остаётся, но к авто-rollback не относится — см. «Миграции»).
+
+- **Точка отката** фиксируется до `git pull`: `PREV=$(git rev-parse HEAD)` — текущий
+  рабочий commit прод-кода.
+- **Триггер отката** — провал post-deploy healthcheck gate (или любая ошибка под
+  `trap rollback ERR`: сбой `git pull --ff-only`, сборки, finальной проверки).
+- **Действия отката** (`rollback()`):
+  1. снять `trap - ERR` (чтобы ошибки внутри отката не вызвали рекурсию);
+  2. `git reset --hard $PREV` — вернуть код на последний рабочий commit;
+  3. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` —
+     пересобрать и поднять прод-стек на коде `PREV`;
+  4. `exit 1` — job помечается **failed** (видно в GitHub Actions, требует вмешательства).
+- Откат возвращает **код и образы** к `PREV`. Состояние БД он **не** откатывает:
+  применённые миграции остаются. Изменения схемы должны быть backward-compatible
+  относительно предыдущей версии кода; несовместимый откат данных — ручной
+  `alembic downgrade` оператором (см. «Миграции»).
 
 ## Health & наблюдаемость
 
@@ -264,22 +323,27 @@ sequenceDiagram
 
 - Структурное логирование на уровне `LOG_LEVEL`. Секреты и full_text не логируются на INFO.
 
-## Статус реализации (фактические артефакты)
+## Статус деплоя
 
-Реализовано devops, соответствует требованиям выше:
+- **Сервис в проде.** Развёрнут на shared-сервере (`87.239.135.154`, `/opt/aichat`) за
+  общим Traefik; публичный URL `https://velunoapp.shop` — live, healthy. Сертификат
+  Let's Encrypt валиден (TLS терминирует Traefik).
+- **CD активен.** Workflow `.github/workflows/deploy.yml` (deploy по push в `main`,
+  SSH-деплой, post-deploy healthcheck gate + авто-rollback — см. §CI/CD). Для удалённого
+  запуска требует GitHub Secrets `SSH_HOST`/`SSH_USER`/`SSH_PRIVATE_KEY`, настраиваемых
+  владельцем репозитория. **Первый деплой выполнен вручную**; последующие — через CD по
+  push в `main`.
+- **Прод-команда** (на сервере, из `/opt/aichat`):
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
+
+### Фактические артефакты (реализовано devops, соответствует требованиям выше)
 
 - `Dockerfile` — multi-stage сборка на `python:3.12-slim`, запуск под non-root user, без секретов в образе.
-- `docker-compose.yml` — сервисы `api` + `db`, общая сеть, volume `pgdata`, `restart: unless-stopped`; `db` healthcheck (`pg_isready`), `api` зависит от `db` по healthcheck (healthcheck-gating), `api` healthcheck `GET /health`.
+- `docker-compose.yml` — сервисы `api` + `db`, общая сеть, volume `pgdata`, `restart: unless-stopped`; `db` healthcheck (`pg_isready`), `api` зависит от `db` по healthcheck (healthcheck-gating), `api` healthcheck `GET /healthz` (liveness, без БД).
+- `docker-compose.prod.yml` — прод-overlay: сеть `web` (`external: true`), Traefik labels на `api`, подключение `api` к `web` + внутренней сети.
 - `docker-entrypoint.sh` — применяет `alembic upgrade head` до запуска uvicorn.
 - `.dockerignore` — исключает `.env`, `.git`, `__pycache__` и пр.
+- Endpoint `GET /healthz` (liveness, без БД) в `api` — используется контейнерным healthcheck и post-deploy gate CD.
+- `.github/workflows/deploy.yml` — CD по push в `main`: SSH-деплой, `git pull --ff-only`, прод-команда, post-deploy healthcheck gate на `https://velunoapp.shop/healthz` + авто-rollback на `PREV` при провале (см. §CI/CD).
 - `DATABASE_URL` собирается в `environment:` сервиса `api` из `POSTGRES_*` (см. «Согласованность credentials БД»); в `env_file`/`.env` он не задаётся, т.к. Compose не интерполирует `${...}` в env_file.
-- E2E проверка интерполяции пройдена (Docker Compose v5.0.2, движок 29.2.1): стек поднят строго по `.env.example` с тестовым паролем, `printenv DATABASE_URL` внутри `api` отдаёт разрезолвленный DSN (реальный пароль, без литерала `${...}`), `alembic upgrade head` применил `0001_initial_schema`, `GET /health` = `200 {"status":"ok"}`.
-
-### Прод-артефакты за общим Traefik (требуются, реализация — devops по ADR-006)
-
-Следующее ещё не реализовано и подлежит созданию devops + backend по этому документу и [ADR-006](adr/ADR-006-prod-deploy-shared-traefik.md):
-
-- `docker-compose.prod.yml` — прод-overlay: сеть `web` (`external: true`), Traefik labels на `api`, подключение `api` к `web` + внутренней сети.
-- Endpoint `GET /healthz` (liveness, без БД) в `api` (backend) — см. модульные 02/03.
-- Переключение контейнерного healthcheck `api` на `GET /healthz` (в `docker-compose.yml`).
-- GitHub Actions workflow CD (deploy по push в `main`, SSH-деплой) — см. раздел CI/CD.
+- E2E проверка интерполяции пройдена (Docker Compose v5.0.2, движок 29.2.1): стек поднят строго по `.env.example` с тестовым паролем, `printenv DATABASE_URL` внутри `api` отдаёт разрезолвленный DSN (реальный пароль, без литерала `${...}`), `alembic upgrade head` применил `0001_initial_schema`, `GET /healthz` = `200 {"status":"ok"}`.
