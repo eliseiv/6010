@@ -4,7 +4,7 @@
 # то есть только при локальном запуске из корня репозитория.
 #
 # В PRODUCTION он НЕ применяется: на VPS деплой идёт ЯВНЫМ списком файлов
-#   docker compose -f docker-compose.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 # (см. docs/07-deployment.md, раздел "Dev vs Prod запуск"). При явном -f
 # Compose не добавляет override автоматически.
 #

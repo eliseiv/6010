@@ -38,6 +38,42 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/aichat
+
+            # Зафиксировать текущий рабочий commit ДО pull — точка отката.
+            PREV="$(git rev-parse HEAD)"
+
+            # rollback(): вернуть код на PREV и пересобрать прод-стек, затем уронить job.
+            # Вызывается при провале post-deploy healthcheck. trap снимается перед откатом,
+            # чтобы ошибки внутри rollback не вызвали рекурсию.
+            rollback() {
+              echo "Deploy failed — rolling back to ${PREV}"
+              trap - ERR
+              git reset --hard "$PREV"
+              docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+              echo "Rolled back to ${PREV}. Marking deploy as failed."
+              exit 1
+            }
+            # Любая необработанная ошибка после установки trap → откат
+            # (set -e + trap ERR ловит сбой git pull / compose build тоже).
+            trap rollback ERR
+
             git pull --ff-only
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+            # Post-deploy healthcheck gate: up -d возвращает 0 сразу, поэтому ждём,
+            # пока сервис реально отвечает (CrashLoop/упавшая миграция → откат).
+            ok=0
+            for i in $(seq 1 30); do
+              if curl -fsS https://velunoapp.shop/healthz >/dev/null; then ok=1; break; fi
+              sleep 5
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "Healthcheck did not pass within timeout"
+              rollback
+            fi
+            # Финальная строгая проверка: ненулевой код через trap уронит job (с откатом).
+            curl -fsS https://velunoapp.shop/healthz >/dev/null
+
+            # Деплой успешен — снять trap и подчистить старые образы.
+            trap - ERR
             docker image prune -f
