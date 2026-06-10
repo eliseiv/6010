@@ -60,6 +60,17 @@ SYSTEM_PROMPT = (
 )
 
 
+# Language directive template (ADR-008) — injected as the LAST system message
+# (recency) so the model's output language is deterministic regardless of the
+# context language. English meta-instruction is content-language-neutral.
+# {language_name} is the English display name from app.core.language.
+LANGUAGE_DIRECTIVE_TEMPLATE = (
+    "CRITICAL: Respond ONLY in {language_name}. The language of the transcript, "
+    "summary, and chat history is irrelevant and MUST NOT influence your output "
+    "language. Write your entire answer in {language_name}."
+)
+
+
 # JSON-block instructions appended for list commands so the service can parse
 # structured_blocks (TD-006: heuristic fenced-JSON + Pydantic validation).
 _TASK_JSON = (

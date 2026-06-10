@@ -79,6 +79,8 @@
 
 Семантика `message`: поле **обязательно и непусто всегда**, в том числе при заданном `quick_command_type`. Пустой/whitespace `message` отклоняется до вызова LLM как `400 empty_transcription` (ранний guard, см. [03-architecture.md](03-architecture.md) §«Обработка ошибок»). При заданной команде `message` трактуется как пользовательское уточнение к команде, а основная инструкция формируется из command prompt (см. 03-architecture). Передавать команду без `message` нельзя.
 
+Язык ответа: определяется **сервером** по языку `message` (детерминированно, [ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md)). При неопределимом языке `message` fallback-сигнал — `transcription.language` (из ingest, см. §1), иначе дефолт сервиса. Контракт request/response не меняется — поведение прозрачно для клиента. Исключение — `translate_or_adapt`: язык результата определяет команда (см. [03-architecture.md](03-architecture.md) §«Быстрые команды» / §«Language-mirroring»).
+
 ### Response 201
 
 ```json

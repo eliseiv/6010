@@ -8,7 +8,7 @@
 | Schemas | `app/schemas/*.py` | Pydantic v2 request/response |
 | Services | `app/services/ingest.py`, `app/services/chat.py`, `app/services/context.py`, `app/services/llm.py`, `app/services/blocks.py` | Бизнес-логика |
 | Repositories | `app/repositories/*.py` | SQLAlchemy async доступ |
-| Core | `app/core/config.py`, `app/core/security.py`, `app/core/errors.py`, `app/core/prompts.py`, `app/core/tokens.py`, `app/core/logging.py` | Конфиг, auth, ошибки, prompts, tiktoken |
+| Core | `app/core/config.py`, `app/core/security.py`, `app/core/errors.py`, `app/core/prompts.py`, `app/core/tokens.py`, `app/core/language.py`, `app/core/logging.py` | Конфиг, auth, ошибки, prompts, tiktoken, детекция языка ([ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md)) |
 
 Имена файлов — ориентир для backend; обязательным является корневой пакет `app/` (02-tech-stack) и наличие перечисленной ответственности.
 
@@ -18,7 +18,7 @@
 1. Auth (X-API-Key, constant-time).
 2. Загрузка transcription (+ summary по `summary_id` или последняя) и истории треда.
 3. Валидация: транскрибация существует и непуста, summary_id (если задан) принадлежит транскрибации.
-4. Построение контекста (summary-first, см. ниже).
+4. Построение контекста (summary-first, см. ниже) + детекция языка ответа и инъекция директи­вы языка последним сообщением (см. §«Language-mirroring», [ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md)).
 5. Сохранение user-сообщения **отдельным commit'ом ДО вызова LLM** (durability: при ошибке/таймауте модели user-сообщение уже зафиксировано в истории треда, assistant-сообщение не создаётся — см. примечание в 02-api-contracts §2).
 6. Запрос к OpenAI (system prompt + контекст), таймаут `OPENAI_TIMEOUT_SECONDS`.
 7. Извлечение structured_blocks для списочных команд.
@@ -26,7 +26,7 @@
 
 ## Системный prompt (дословно, зафиксировано)
 
-Хранится константой в `app/core/prompts.py`. Текст НЕ менять без нового ADR. Правило language-mirroring и формулировка плейсхолдера — [ADR-007](../../adr/ADR-007-system-prompt-language-mirroring.md):
+Хранится константой в `app/core/prompts.py`. Текст НЕ менять без нового ADR. Формулировка плейсхолдера и текстовое правило mirroring — [ADR-007](../../adr/ADR-007-system-prompt-language-mirroring.md). Детерминизм языка ответа обеспечивает не этот текст, а серверная детекция + явная директива (см. §«Language-mirroring», [ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md)):
 
 ```
 Ты AI-ассистент внутри приложения для транскрибации. Работай только с контекстом текущей транскрибации, summary и выбранными пользователем фрагментами. Не выдумывай факты вне предоставленного текста. Если ответа нет в транскрибации, так и скажи и предложи, какой дополнительный контекст нужен.
@@ -35,6 +35,28 @@
 Отвечай кратко и структурно. Если пользователь просит список задач, возвращай пункты с понятным действием, владельцем и сроком, если они есть в тексте. Если владельца или срока нет, помечай это на языке твоего ответа (`не указано` для русского, `not specified` для английского и т. п.).
 Всегда сохраняй привязку к исходной транскрибации и не уходи в общие советы, если пользователь прямо не просит этого.
 ```
+
+## Language-mirroring (детерминированный, зафиксировано) — ADR-008
+
+Язык ответа вычисляется **на сервере**, а не доверяется самоопределению модели. Реализация — `app/core/language.py` + сборка контекста в `app/services/context.py`/`chat.py`. Полное обоснование — [ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md).
+
+**1. Детекция языка** — чистая синхронная функция `detect_response_language(message: str) -> str` (ISO 639-1), гибрид:
+- нормализация (trim, учёт только буквенных символов);
+- **script-guard:** доминирование кириллицы (`U+0400–U+04FF`, `U+0500–U+052F`) → `ru`; иные однозначные не-латинские письменности → соответствующий ISO-код — без обращения к библиотеке;
+- **латиница → `lingua`** (набор: English, Russian, German, French, Spanish, Italian, Portuguese; устойчив к коротким строкам), берётся язык с макс. confidence;
+- **fallback** (нет буквенных символов / `lingua` вернул `None`): `transcription.language` (если валиден ISO) иначе `DEFAULT_RESPONSE_LANGUAGE` (env, default `ru`).
+
+Детектор `lingua` инициализируется один раз на процесс (синглтон/lru).
+
+**2. Директива языка** — короткое **system-сообщение**, добавляется **последним** в `messages[]` (recency), формулировка-шаблон (константа в `app/core/prompts.py`):
+
+```
+CRITICAL: Respond ONLY in {language_name}. The language of the transcript, summary, and chat history is irrelevant and MUST NOT influence your output language. Write your entire answer in {language_name}.
+```
+
+`{language_name}` — английское название языка из фиксированного маппинга `ISO → English name` в `app/core/language.py` (для языков вне маппинга — сам ISO-код). Директива на английском намеренно — языково-нейтральна к контенту.
+
+**3. Приоритет `translate_or_adapt`:** для `quick_command_type == "translate_or_adapt"` директива mirroring **НЕ инжектируется** (целевой язык определяет команда, см. §«Быстрые команды»). Для всех прочих команд и свободного чата — инжектируется.
 
 ## Быстрые команды (quick_command_type)
 
@@ -59,7 +81,16 @@
 
 Реализуется в `app/services/context.py` + `app/core/tokens.py` (tiktoken).
 
-Приоритет (от наивысшего): system_prompt > текущий `message` > `selected_text` > summary > full_text > история (новые→старые).
+Приоритет сохранения при усечении (от наивысшего): system_prompt ≈ **директива языка** ≈ текущий `message` > `selected_text` > summary > full_text > история (новые→старые). Директива языка (ADR-008) имеет наивысший приоритет и **никогда не усекается/не отбрасывается**.
+
+### Порядок сообщений в `messages[]` (передаётся в OpenAI) — зафиксировано (ADR-008)
+
+1. `system`: системный prompt (константа `app/core/prompts.py`).
+2. контекст по summary-first: история (старые→новые), summary, full_text/selected_text — порядок/усечение по алгоритму ниже.
+3. `user`: текущий `message` (+ command prompt при заданном `quick_command_type`).
+4. `system`: **директива языка — всегда последнее сообщение** (recency). Пропускается только для `translate_or_adapt`.
+
+Бюджет: директива языка короткая (< 50 токенов), входит в **system-часть** бюджета и учитывается tiktoken **до** summary-first решения наравне с системным prompt ([ADR-002](../../adr/ADR-002-llm-provider-model.md) `CONTEXT_TOKEN_BUDGET`). Она не подлежит усечению — summary-first усекает только full_text/историю/summary/selected_text, поэтому директива не ломает summary-first.
 
 Алгоритм:
 1. Собрать полный контекст и оценить токены tiktoken.

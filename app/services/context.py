@@ -49,6 +49,11 @@ class ContextInputs:
     quick_command: QuickCommand | None = None
     language: str | None = None
     history: list[HistoryMessage] = field(default_factory=list)
+    # Language directive (ADR-008): the fully formatted directive text, or None
+    # when it must NOT be injected (e.g. translate_or_adapt). When set it is
+    # always appended as the LAST system message (recency) and is never
+    # truncated/dropped — it is counted in every token estimate.
+    language_directive: str | None = None
 
 
 @dataclass
@@ -101,6 +106,12 @@ def _build_messages(
         messages.append({"role": item.role, "content": item.content})
 
     messages.append({"role": "user", "content": _user_message_text(inputs)})
+
+    # ADR-008: language directive is ALWAYS the last message (recency) and has the
+    # highest preservation priority — it is appended on every build so it is part
+    # of every token estimate and is never truncated/dropped by summary-first.
+    if inputs.language_directive:
+        messages.append({"role": "system", "content": inputs.language_directive})
     return messages
 
 

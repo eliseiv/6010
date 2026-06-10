@@ -19,6 +19,7 @@
 | `alembic` | `>=1.13,<2.0` | Миграции БД |
 | `openai` | `>=1.54,<2.0` | Клиент OpenAI |
 | `tiktoken` | `>=0.8,<0.9` | Оценка токенов |
+| `lingua-language-detector` | `>=2.0,<3.0` | Серверная детекция языка `message` для language-mirroring ([ADR-008](adr/ADR-008-deterministic-language-mirroring.md)) |
 | `python-dotenv` | `>=1.0,<2.0` | Поддержка `.env` (через pydantic-settings) |
 
 ## Dev / тест зависимости

@@ -24,7 +24,9 @@ from app.core.errors import (
     SummaryNotFoundError,
     TranscriptionNotFoundError,
 )
+from app.core.language import detect_response_language, language_display_name
 from app.core.logging import get_logger
+from app.core.prompts import LANGUAGE_DIRECTIVE_TEMPLATE, QuickCommand
 from app.repositories.chat_messages import ChatMessageRepository
 from app.repositories.transcriptions import TranscriptionRepository
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse
@@ -76,6 +78,8 @@ class ChatService:
         )
         history = [HistoryMessage(role=row.role, content=row.content) for row in history_rows]
 
+        language_directive = self._build_language_directive(payload, transcription.language)
+
         context = build_context(
             ContextInputs(
                 model=self._model,
@@ -87,6 +91,7 @@ class ChatService:
                 quick_command=payload.quick_command_type,
                 language=transcription.language,
                 history=history,
+                language_directive=language_directive,
             )
         )
 
@@ -135,6 +140,23 @@ class ChatService:
             context_truncated=context.context_truncated,
             context_mode=context.context_mode,
         )
+
+    def _build_language_directive(
+        self,
+        payload: ChatMessageRequest,
+        transcription_language: str | None,
+    ) -> str | None:
+        """Build the language-mirroring directive (ADR-008), or None to skip it.
+
+        Skipped for translate_or_adapt: that command owns its target language and
+        the mirroring directive would conflict with it (ADR-008 §4). For all other
+        commands and free chat, detect the message language deterministically and
+        format the directive with the English display name.
+        """
+        if payload.quick_command_type is QuickCommand.TRANSLATE_OR_ADAPT:
+            return None
+        iso_code = detect_response_language(payload.message, transcription_language)
+        return LANGUAGE_DIRECTIVE_TEMPLATE.format(language_name=language_display_name(iso_code))
 
     async def _resolve_summary(
         self,

@@ -45,6 +45,16 @@ class Settings(BaseSettings):
         description="Max recent thread messages included into context (newest first).",
     )
 
+    # --- Language mirroring (ADR-008) ---
+    DEFAULT_RESPONSE_LANGUAGE: str = Field(
+        default="ru",
+        min_length=2,
+        description=(
+            "Fallback ISO 639-1 response language when message language is "
+            "undetectable and transcription language is unknown (ADR-008)."
+        ),
+    )
+
     # --- Observability ---
     LOG_LEVEL: str = Field(default="INFO", description="Logging level.")
 
