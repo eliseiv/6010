@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.core.errors import ContextTooLongError
-from app.core.prompts import QuickCommand
+from app.core.prompts import SYSTEM_PROMPT, QuickCommand
+from app.core.tokens import count_tokens
 from app.services.context import (
     TRUNCATION_NOTE,
     ContextInputs,
@@ -14,6 +15,10 @@ from app.services.context import (
 )
 
 MODEL = "gpt-4o-mini"
+# Budget just above the system-prompt floor: minimal context fits, but heavy
+# parts (full_text/summary) must be truncated. Derived from SYSTEM_PROMPT so it
+# survives prompt edits (e.g. ADR-007 language-mirroring) rather than hardcoding.
+TIGHT_BUDGET = count_tokens(SYSTEM_PROMPT, MODEL) + 30
 
 
 def test_small_context_is_full_mode() -> None:
@@ -37,7 +42,7 @@ def test_long_text_with_summary_drops_full_text() -> None:
     result = build_context(
         ContextInputs(
             model=MODEL,
-            token_budget=300,
+            token_budget=TIGHT_BUDGET,
             message="вопрос",
             full_text=long_text,
             summary="короткое summary",
@@ -45,7 +50,7 @@ def test_long_text_with_summary_drops_full_text() -> None:
     )
     assert result.context_mode in ("summary_first", "truncated")
     assert result.context_truncated is True
-    assert result.token_count <= 300
+    assert result.token_count <= TIGHT_BUDGET
     assert TRUNCATION_NOTE in result.messages[0]["content"]
     # full_text must not appear verbatim in any message.
     joined = "\n".join(m["content"] for m in result.messages)
@@ -57,13 +62,13 @@ def test_long_text_without_summary_truncates_full_text() -> None:
     result = build_context(
         ContextInputs(
             model=MODEL,
-            token_budget=300,
+            token_budget=TIGHT_BUDGET,
             message="вопрос",
             full_text=long_text,
         )
     )
     assert result.context_truncated is True
-    assert result.token_count <= 300
+    assert result.token_count <= TIGHT_BUDGET
 
 
 def test_minimal_context_over_budget_raises_413() -> None:

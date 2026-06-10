@@ -10,6 +10,7 @@
 | [ADR-004](ADR-004-context-summary-first.md) | Стратегия контекста summary-first и оценка токенов tiktoken | Accepted | 2026-06-09 |
 | [ADR-005](ADR-005-thread-and-summary-model.md) | Один тред на транскрибацию; summary как отдельная сущность | Accepted | 2026-06-09 |
 | [ADR-006](ADR-006-prod-deploy-shared-traefik.md) | Прод-развёртывание за общим Traefik на shared-сервере | Accepted | 2026-06-09 |
+| [ADR-007](ADR-007-system-prompt-language-mirroring.md) | Language-mirroring в системном prompt: ответ на языке сообщения пользователя | Accepted | 2026-06-10 |
 
 ## Статусы
 
