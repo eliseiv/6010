@@ -40,11 +40,11 @@
 
 Язык ответа вычисляется **на сервере**, а не доверяется самоопределению модели. Реализация — `app/core/language.py` + сборка контекста в `app/services/context.py`/`chat.py`. Полное обоснование — [ADR-008](../../adr/ADR-008-deterministic-language-mirroring.md).
 
-**1. Детекция языка** — чистая синхронная функция `detect_response_language(message: str) -> str` (ISO 639-1), гибрид:
+**1. Детекция языка** — чистая синхронная функция `detect_response_language(message: str, transcription_language: str | None) -> str` (ISO 639-1), гибрид. Второй аргумент `transcription_language` (= `transcription.language` или `None`) — fallback-сигнал, когда `message` неопределим.
 - нормализация (trim, учёт только буквенных символов);
-- **script-guard:** доминирование кириллицы (`U+0400–U+04FF`, `U+0500–U+052F`) → `ru`; иные однозначные не-латинские письменности → соответствующий ISO-код — без обращения к библиотеке;
+- **script-guard (v1: кириллица + латиница):** доминирование кириллицы (`U+0400–U+04FF`, `U+0500–U+052F`) → `ru` — без обращения к библиотеке. Иная не-латинская письменность (CJK, арабица и т. п.) в v1 в ISO-код по script'у **не** маппится → уходит в fallback;
 - **латиница → `lingua`** (набор: English, Russian, German, French, Spanish, Italian, Portuguese; устойчив к коротким строкам), берётся язык с макс. confidence;
-- **fallback** (нет буквенных символов / `lingua` вернул `None`): `transcription.language` (если валиден ISO) иначе `DEFAULT_RESPONSE_LANGUAGE` (env, default `ru`).
+- **fallback** (нет буквенных символов / доминирует не-латинская не-кириллическая письменность / `lingua` вернул `None`): `transcription_language` (если валиден ISO) иначе `DEFAULT_RESPONSE_LANGUAGE` (env, default `ru`).
 
 Детектор `lingua` инициализируется один раз на процесс (синглтон/lru).
 

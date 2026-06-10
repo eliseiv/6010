@@ -335,6 +335,9 @@ gate проверяет, что процесс поднялся и доступ�
   push в `main`.
 - **Прод-команда** (на сервере, из `/opt/aichat`):
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
+- **Language-mirroring (ADR-008) — live на проде.** Детерминированный mirroring развёрнут
+  и подтверждён на `https://velunoapp.shop`: EN-вопрос по RU-контексту → EN-ответ; RU→RU;
+  DE→DE (детали и дата — в changelog [modules/ai-chat/README.md](modules/ai-chat/README.md)).
 
 ### Фактические артефакты (реализовано devops, соответствует требованиям выше)
 
